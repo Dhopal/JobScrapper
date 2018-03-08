@@ -40,12 +40,12 @@ def scrap_job_details(URL):
 	}
 	#view_cnt
 	views_cnt = soup.select('#ji_view_id_' + job_id[5:]) #'#jdsj-60174370'
-	if len(views_cnt[0].text) > 0:
+	if len(views_cnt) > 0:
 		job_box['views_cnt'] = make_valid_string(views_cnt[0].text)
 
 	#applied_cnt
 	applied_cnt = soup.select('#ji_apply_id_' + job_id[5:])
-	if len(applied_cnt[0].text):
+	if len(applied_cnt):
 		job_box['applied_cnt'] = make_valid_string(applied_cnt[0].text)
 
 	#review_cnt
