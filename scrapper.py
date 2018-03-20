@@ -1,21 +1,37 @@
-import requests, os, bs4, json, codecs
+import requests, os, bs4, json, codecs, sys, time, datetime, calendar, errno, logging
+import ast
+
+
+list_of_jobs = []
+tree_of_jobs = {}
 
 def make_valid_string(s):
 	return ((s.lstrip()).rstrip()).replace("\n"," ")
 
+def find_vc_and_ac(date, job_id):
+	payload = {
+	'adId': job_id,
+	'postedDate': str(date)
+	}
+	r = requests.get(
+		url='http://alerts.timesjobs.com/naf/node/jobInsight/getAppViewCount',
+		data=payload,
+		headers={'X-Requested-With': 'XMLHttpRequest'}
+		)
+	return r.text
 
 def scrap_job_details(URL):
 	#print("Downloading job for url            : " + URL)
 	url = URL
-	#print('Downloading webpage...')
 	res = requests.get(url)
 	res.raise_for_status()
 	soup = bs4.BeautifulSoup(res.text, "html.parser")
-    
+
     #first get the job id
 	job_id = soup.find('div', attrs = {'class':'clearfix wrap jd-main-job-1'})['id']
 
 	job_box = {
+	    'job_id' : '',
 	    'url' : '',
 		'job_title' : '',
 		'company_name' : '',
@@ -38,15 +54,21 @@ def scrap_job_details(URL):
 		'views_cnt' : '',
 		'applied_cnt' : ''
 	}
-	#view_cnt
-	views_cnt = soup.select('#ji_view_id_' + job_id[5:]) #'#jdsj-60174370'
-	if len(views_cnt) > 0:
-		job_box['views_cnt'] = make_valid_string(views_cnt[0].text)
+	job_box['job_id'] = job_id
 
-	#applied_cnt
-	applied_cnt = soup.select('#ji_apply_id_' + job_id[5:])
-	if len(applied_cnt):
-		job_box['applied_cnt'] = make_valid_string(applied_cnt[0].text)
+	#posted_on
+	posted_on = soup.select('#' + job_id + ' > section > section > div > div.jd-action-bottom.clearfix > div.posting-dtl > span.pstd-on')
+	if len(posted_on) > 0:
+		job_box['posted_on'] = make_valid_string(posted_on[0].text[11:])
+
+	#view_count and applied_cnt
+	date = datetime.datetime.strptime(job_box['posted_on'].replace(" ","").replace(",","").upper(), "%d%b%Y")
+	postedDate = calendar.timegm(date.utctimetuple())
+	data = ast.literal_eval(find_vc_and_ac(postedDate, job_id[5:]))
+	
+	if len(data) > 0:
+		job_box['views_cnt'] = str(data['data']['vc'])
+		job_box['applied_cnt'] = str(data['data']['ac'])
 
 	#review_cnt
 	review_cnt = soup.select('#' + job_id + ' > section > section > div > div.jd-header.clearfix > div.top-job-detail.clearfix > div > div > div > div > a')
@@ -58,11 +80,6 @@ def scrap_job_details(URL):
 	if len(star) > 0:
 		job_box['star'] = str(star[0]['style'])[6:-1]
 
-	#posted_on
-	posted_on = soup.select('#' + job_id + ' > section > section > div > div.jd-action-bottom.clearfix > div.posting-dtl > span.pstd-on')
-	if len(posted_on) > 0:
-		job_box['posted_on'] = make_valid_string(posted_on[0].text)
-
 	job_box['url'] = url
 
 	#Job title
@@ -70,7 +87,6 @@ def scrap_job_details(URL):
 	if len(job_name) > 0:
 		job_box['job_title'] = job_name[0].text
 
-#jdsj-61378174 > section > section > div > div.jd-header.clearfix > div.top-job-detail.clearfix > div > div > div > h2	
     #Hiring Company Name
 	company_name = soup.select('#' + job_id + ' > section > section > div > div.jd-header.clearfix > div.top-job-detail.clearfix > div > div > div > h2 > a > span')
 	if len(company_name) > 0:
@@ -79,11 +95,6 @@ def scrap_job_details(URL):
 		company_name = soup.select('#' + job_id + ' > section > section > div > div.jd-header.clearfix > div.top-job-detail.clearfix > div > div > div')
 		if len(company_name) > 0:
 			job_box['company_name'] = make_valid_string(company_name[0].text)
-
-	#TODO
-	#Rating star and Reviews
-	reviews = soup.select('#' + job_id + ' > section > section > div > div.jd-header.clearfix > div.top-job-detail.clearfix > div > div > div > div > a')
-	#print(reviews)
 
 	#Experience
 	experience = soup.select('#' + job_id + ' > section > section > div > div.jd-header.clearfix > div.top-job-detail.clearfix > ul > li:nth-of-type(1) > span:nth-of-type(2)')
@@ -163,47 +174,63 @@ def scrap_job_details(URL):
 	if len(desired_candidate_profile) > 0:
 		job_box['desired_candidate_profile'] = make_valid_string(desired_candidate_profile[0].text)
 	return job_box
-	#print(json.dumps(job_box))
-	#print(job_box)
-
+'''
 def scrap_site_map_page():
-	all_times_jobs = {}
 	url = 'http://www.timesjobs.com/jobs-sitemap/';
+	urls_for_jobs = []
 	total_page_cnt = 1
 	job_cnt = 0
+	url_file = 'C:/Users/saurabh.anand/Desktop/JobScrapper/job_urls.txt'
+	
 	for page_cnt in range(1, total_page_cnt + 1):
-		all_times_jobs[str('jobs-sitemap/' + str(page_cnt))] = []
-
+		# if job_cnt > 10:
+		# 	break
+		# tree_of_jobs[str('jobs-sitemap/' + str(page_cnt))] = []
 		new_url = url + str(page_cnt)
-		print('Downloading webpage...' + str(new_url))
-		res = requests.get(new_url)
-		res.raise_for_status()
-		soup = bs4.BeautifulSoup(res.text, "html.parser")
-		total_sub_page_cnt = 60 #make it 60
-
-		level2 = {}
+		# print('Downloading webpage...' + str(new_url))
+		# res = requests.get(new_url)
+		# res.raise_for_status()
+		# soup = bs4.BeautifulSoup(res.text, "html.parser")
+		total_sub_page_cnt = 60 #make it 60# level2 = {}
 		for i in range(1, total_sub_page_cnt + 1):
+			# if job_cnt > 10:
+			# 	break
 			sub_page_url = new_url + "/" + str(i)
-			#print(sub_page_url)
 			jobs_res = requests.get(sub_page_url)
 			jobs_res.raise_for_status()
 			jobs_soup = bs4.BeautifulSoup(jobs_res.text, "html.parser")
-			#cnt = 0
-			level2[str('jobs-sitemap/' + str(page_cnt) + '/' + str(i))] = []
+			# level2[str('jobs-sitemap/' + str(page_cnt) + '/' + str(i))] = []
 			for a in jobs_soup.find_all('a',href=True):
 				x = a['href']
 				if x.startswith('http://www.timesjobs.com/job-detail/'):
-					#print(x)
 					job_cnt += 1
 					print("job_cnt = " + str(job_cnt))
-					level2[str('jobs-sitemap/' + str(page_cnt) + '/' + str(i))].append(scrap_job_details(x))
+					#urls_for_jobs.append(x)
+					# with open('urls_for_jobs.txt', 'a') as f:
+					# 	f.write(x)
+					# 	f.write('\n')
+					# if job_cnt > 10:
+					# 	break
+					#b_box = scrap_job_details(x)
+		# 			list_of_jobs.append(job_box)
+		# 			level2[str('jobs-sitemap/' + str(page_cnt) + '/' + str(i))].append(job_box)
+		# tree_of_jobs[str('jobs-sitemap/' + str(page_cnt))].append(level2)
+		# with open('urls_for_jobs.txt', 'wb') as f:
+		# 	json.dump(urls_for_jobs, codecs.getwriter('utf-8')(f), ensure_ascii=False)
 
-		
-		all_times_jobs[str('jobs-sitemap/' + str(page_cnt))].append(level2)
-	return all_times_jobs
-	#print(json.dumps(all_times_jobs))
-    
+'''
 if __name__ == "__main__":
-	data = scrap_site_map_page()
-	with open('data.txt', 'wb') as f:
-		json.dump(data, codecs.getwriter('utf-8')(f), ensure_ascii=False)
+	start = 0
+	l = []
+	with open('urls_for_jobs.txt') as f:
+		lines = f.read().splitlines()
+		for i in range(start,len(lines)):
+			print('Downloading Job : ' + str(i) +  lines[i])
+			with open('Jobs_json/'+str(str(i) + '.txt'), 'wb') as f:
+				json.dump(scrap_job_details(lines[i]), codecs.getwriter('utf-8')(f), ensure_ascii=False)
+			
+	# scrap_site_map_page()
+	# with open('tree_data.txt', 'wb') as f:
+	# 	json.dump(tree_of_jobs, codecs.getwriter('utf-8')(f), ensure_ascii=False)
+	# with open('list_data.txt', 'wb') as f:
+	# 	json.dump(list_of_jobs, codecs.getwriter('utf-8')(f), ensure_ascii=False)
